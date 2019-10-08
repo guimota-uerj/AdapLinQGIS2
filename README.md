@@ -1,4 +1,4 @@
-# AdapLin ![Project Icon](AdapliniconSmall.png )
+# AdapLin ![Project Icon](AdapliniconSmall.png )dapLin
 Repository for the development of AdapLin plugin for QGIS 
 
 ![Project Icon](AdapliniconSmall.png )
