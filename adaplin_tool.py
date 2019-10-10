@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 from qgis.core import *
@@ -8,10 +10,11 @@ import collections
 
 from utils import *
 
-class Adaplin(QgsMapTool):
-    def __init__(self, iface, camada_raster, bandas):
+class Adaplin(QgsMapTool):	
+    def __init__(self, iface, camada_raster, bandas, action):
         self.camada_raster = camada_raster
         self.iface = iface
+        self.action = action
         self.canvas = self.iface.mapCanvas()
         self.bandas = bandas
         
@@ -49,46 +52,52 @@ class Adaplin(QgsMapTool):
                                       "       +.+      "]))       
                                       
     def canvasPressEvent(self, event):
-        # Device coordinates of mouse
-        x = event.pos().x()
-        y = event.pos().y()
-        
-        # Add the marked point on left click
-        if event.button() == Qt.LeftButton:
-            startingPoint = QPoint(x,y) 
+        layer = self.canvas.currentLayer()
+
+        if layer.isEditable() and self.action.isChecked():
+            # Device coordinates of mouse
+            x = event.pos().x()
+            y = event.pos().y()
             
-            # Try to snap to current Layer if it is specified in QGIS digitizing options
-            snapper = QgsMapCanvasSnapper(self.canvas)
-            (retval,result) = snapper.snapToCurrentLayer (startingPoint, QgsSnapper.SnapToVertex)
-                 
-            if result <> []:
-                point = QgsPoint( result[0].snappedVertex )
-            else:
-                (retval,result) = snapper.snapToBackgroundLayers(startingPoint)
+            # Add the marked point on left click
+            if event.button() == Qt.LeftButton:
+                startingPoint = QPoint(x,y) 
+                
+                # Try to snap to current Layer if it is specified in QGIS digitizing options
+                snapper = QgsMapCanvasSnapper(self.canvas)
+                (retval,result) = snapper.snapToCurrentLayer (startingPoint, QgsSnapper.SnapToVertex)
+                     
                 if result <> []:
                     point = QgsPoint( result[0].snappedVertex )
                 else:
-                    point = self.canvas.getCoordinateTransform().toMapCoordinates( event.pos().x(), event.pos().y() )
+                    (retval,result) = snapper.snapToBackgroundLayers(startingPoint)
+                    if result <> []:
+                        point = QgsPoint( result[0].snappedVertex )
+                    else:
+                        point = self.canvas.getCoordinateTransform().toMapCoordinates( event.pos().x(), event.pos().y() )
+                
+                # Append point to list of points marked by the user
+                self.points.append(point)
+                
+                # If tool is in Manual Mode, we just append the point to pontos_interpolados            
+                if self.mCtrl:
+                    self.pontos_interpolados.append(point)
+                # If the tool is in Default Mode, we append the new points to pontos_interpolados
+                else:
+                    pontos_recentes = self.interpolacao ( self.points[-2::] )
+                    self.pontos_interpolados = self.pontos_interpolados + pontos_recentes[1:] 
             
-            # Append point to list of points marked by the user
-            self.points.append(point)
-            
-            # If tool is in Manual Mode, we just append the point to pontos_interpolados            
-            if self.mCtrl:
-                self.pontos_interpolados.append(point)
-            # If the tool is in Default Mode, we append the new points to pontos_interpolados
+            # On the right click, we create the feature with pontos_interpolados and clear the things for the next feature  
             else:
-                pontos_recentes = self.interpolacao ( self.points[-2::] )
-                self.pontos_interpolados = self.pontos_interpolados + pontos_recentes[1:] 
-        
-        # On the right click, we create the feature with pontos_interpolados and clear the things for the next feature  
-        else:
-            if len( self.points ) >= 2:
-                self.createFeature(self.pontos_interpolados) 
+                if len( self.points ) >= 2:
+                    self.createFeature(self.pontos_interpolados) 
 
-            self.resetPoints()
-            self.resetRubberBand()
-            self.canvas.refresh() 
+                self.resetPoints()
+                self.resetRubberBand()
+                self.canvas.refresh()
+
+        else:
+            pass
 
     # Clean lists of points
     def resetPoints(self):
@@ -103,11 +112,11 @@ class Adaplin(QgsMapTool):
             
         coords = pontos_interpolados
         
-        if self.canvas.mapRenderer().hasCrsTransformEnabled() and layer.crs() != self.canvas.mapRenderer().destinationCrs():
+        if self.canvas.mapSettings().hasCrsTransformEnabled() and layer.crs() != self.canvas.mapSettings().destinationCrs():
             coords_tmp = coords[:]
             coords = []
             for point in coords_tmp:
-                transformedPoint = self.canvas.mapRenderer().mapToLayerCoordinates( layer, point )
+                transformedPoint = self.canvas.mapSettings().mapToLayerCoordinates( layer, point )
                 coords.append(transformedPoint)
               
         if self.isPolygon == True:
@@ -124,20 +133,26 @@ class Adaplin(QgsMapTool):
         
         settings = QSettings()
         
-        disable_attributes = settings.value( "/qgis/digitizing/disable_enter_attribute_values_dialog", False, type=bool)
-        if disable_attributes:
-            layer.addFeature(f)
-            layer.endEditCommand()
-        else:
-            dlg = self.iface.getFeatureForm(layer, f)
-            if QGis.QGIS_VERSION_INT >= 20400: 
-                dlg.setIsAddDialog( True ) 
-            if dlg.exec_():
-                if QGis.QGIS_VERSION_INT < 20400: 
-                    layer.addFeature(f)
+        if len(self.points) != 0:
+            disable_attributes = settings.value( "/qgis/digitizing/disable_enter_attribute_values_dialog", False, type=bool)
+
+            if disable_attributes:
+                layer.addFeature(f)
                 layer.endEditCommand()
             else:
-                layer.destroyEditCommand()
+                dlg = self.iface.getFeatureForm(layer, f)
+                if QGis.QGIS_VERSION_INT >= 20400: 
+                    dlg.setMode( True ) 
+                if dlg.exec_():
+                    if QGis.QGIS_VERSION_INT < 20400: 
+                        layer.addFeature(f)
+                    layer.endEditCommand()
+                else:
+                    layer.destroyEditCommand()
+
+        else:
+            QMessageBox.information(self.iface.mainWindow(), 'Aviso', 'Nenhum ponto marcado ainda')
+            return
                 
     # This is similar to canvasPressEvent
     def canvasMoveEvent(self,event):
@@ -186,7 +201,7 @@ class Adaplin(QgsMapTool):
         self.isPolygon = False
         if self.type == QGis.Polygon:
             self.isPolygon = True
-
+            
     def resetRubberBand(self):
         self.rb.reset( self.type )
 
@@ -324,7 +339,7 @@ class Adaplin(QgsMapTool):
         provedor = raster.dataProvider()        
 
         # We have to transform the point to the raster projection
-        mapCanvasSrs = self.iface.mapCanvas().mapRenderer().destinationCrs()
+        mapCanvasSrs = self.iface.mapCanvas().mapSettings().destinationCrs()
         rasterSrs = raster.crs()
         srsTransform = QgsCoordinateTransform(mapCanvasSrs, rasterSrs)
         
@@ -447,10 +462,3 @@ class Adaplin(QgsMapTool):
             penultimo_elemento_marcado = self.points[-2]
             self.pontos_interpolados = self.pontos_interpolados[0:self.pontos_interpolados.index(penultimo_elemento_marcado)+1]
             self.points.pop()
-            
-            
-
-
-    
-            
-            

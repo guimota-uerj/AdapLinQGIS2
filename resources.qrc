@@ -1,5 +1,5 @@
 <RCC>
     <qresource prefix="/plugins/AdaplinTool" >
-        <file>icon.png</file>
+        <file>AdaplinIcon.png</file>
     </qresource>
 </RCC>

@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>666</width>
-    <height>427</height>
+    <width>467</width>
+    <height>358</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -16,8 +16,8 @@
   <widget class="QDialogButtonBox" name="button_box">
    <property name="geometry">
     <rect>
-     <x>240</x>
-     <y>350</y>
+     <x>-30</x>
+     <y>310</y>
      <width>341</width>
      <height>32</height>
     </rect>
@@ -32,7 +32,7 @@
   <widget class="QLabel" name="label">
    <property name="geometry">
     <rect>
-     <x>150</x>
+     <x>20</x>
      <y>10</y>
      <width>431</width>
      <height>41</height>
@@ -50,8 +50,8 @@
   <widget class="QComboBox" name="comboBox">
    <property name="geometry">
     <rect>
-     <x>150</x>
-     <y>60</y>
+     <x>20</x>
+     <y>50</y>
      <width>421</width>
      <height>22</height>
     </rect>
@@ -60,8 +60,8 @@
   <widget class="QLabel" name="label_2">
    <property name="geometry">
     <rect>
-     <x>150</x>
-     <y>110</y>
+     <x>20</x>
+     <y>90</y>
      <width>361</width>
      <height>16</height>
     </rect>
@@ -78,8 +78,8 @@
   <widget class="QComboBox" name="comboBox_2">
    <property name="geometry">
     <rect>
-     <x>150</x>
-     <y>140</y>
+     <x>20</x>
+     <y>120</y>
      <width>421</width>
      <height>22</height>
     </rect>
@@ -88,8 +88,8 @@
   <widget class="QLabel" name="label_3">
    <property name="geometry">
     <rect>
-     <x>150</x>
-     <y>190</y>
+     <x>20</x>
+     <y>160</y>
      <width>361</width>
      <height>16</height>
     </rect>
@@ -106,8 +106,8 @@
   <widget class="QComboBox" name="comboBox_3">
    <property name="geometry">
     <rect>
-     <x>150</x>
-     <y>220</y>
+     <x>20</x>
+     <y>190</y>
      <width>421</width>
      <height>22</height>
     </rect>
@@ -116,8 +116,8 @@
   <widget class="QLabel" name="label_4">
    <property name="geometry">
     <rect>
-     <x>150</x>
-     <y>260</y>
+     <x>20</x>
+     <y>230</y>
      <width>361</width>
      <height>16</height>
     </rect>
@@ -134,8 +134,8 @@
   <widget class="QComboBox" name="comboBox_4">
    <property name="geometry">
     <rect>
-     <x>150</x>
-     <y>290</y>
+     <x>20</x>
+     <y>260</y>
      <width>421</width>
      <height>22</height>
     </rect>
