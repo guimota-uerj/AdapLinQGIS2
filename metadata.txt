@@ -9,8 +9,7 @@
 [general]
 name=Adaplin Tool
 qgisMinimumVersion=2.0
-description=Do the semiautomatic vectorization of a road based on a raster. Faz a vetorização semiautomática de uma estrada com base em um raster.
-            
+description=AdapLin is an adaptive, interactive, assisting tool for roads vector mapping. It takes advantage of features present in a georeferenced image to optimize the vectorization process.           
                
 version=0.2
 author=Marcel Rotunno, Thiago Ferraccioli and Guilherme Lucio Abelha Mota
@@ -21,8 +20,7 @@ about=The AdapLin Tool is an adaptive, interactive, assisting tool for roads vec
 AdapLin Tool was created for the master’s degree dissertation of Marcel Emanuelli Rotunno (2017) submitted to the Post-Graduation Program on Computational Sciences at Rio de Janeiro State University (UERJ). That research aimed at attending demands of road cartographic production of the Brazilian Institute of Geography and Statistics (IBGE). This software is available under GNU/GPL licence to anyone who desires improving roads mapping experience.
 
 More information in: https://github.com/guimota-uerj/AdapLinQGIS2/blob/master/documentation/Adaplin_Plugin_for_QGis_User_Manual.pdf
-For test images: https://github.com/guimota-uerj/AdapLinQGIS2/tree/master/documentation
-            
+For test images: https://github.com/guimota-uerj/AdapLinQGIS2/tree/master/documentation     
 
 tracker=https://github.com/guimota-uerj/AdapLinQGIS2/issues
 repository=https://github.com/guimota-uerj/AdapLinQGIS2/
@@ -45,4 +43,3 @@ experimental=False
 
 # deprecated flag (applies to the whole plugin, not just a single version)
 deprecated=False
-
