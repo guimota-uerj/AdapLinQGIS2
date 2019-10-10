@@ -28,14 +28,15 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 # 
 #---------------------------------------------------------------------
-
-
+import sys
 
 # Import the PyQt and the QGIS libraries
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 from qgis.core import *
 from qgis.gui import *
+import qgis.utils
+from qgis.core.contextmanagers import qgisapp
 
 # Initialize Qt resources from file resources.py
 import resources
@@ -51,7 +52,7 @@ from settings_dialog import SettingsDialog
 from utils import *
 
 
-class AdaplinControl:
+class AdaplinControl():
     
     def __init__(self, iface):
         # Save reference to the QGIS interface
@@ -64,15 +65,16 @@ class AdaplinControl:
         # Create settings dialog
         self.settingsDialog = SettingsDialog()
 
-   
+        self.disconnection = None
+
     def initGui(self):
         mc = self.canvas
         layer = mc.currentLayer()
 
         # Create action for the plugin icon and the plugin menu
-        self.action = QAction( QIcon(":/plugins/AdaplinTool/icon.png"), "Adaplin", self.iface.mainWindow() )
+        self.action = QAction( QIcon(":/plugins/AdaplinTool/AdaplinIcon.png"), "Adaplin", self.iface.mainWindow() )
         
-        # Button starts disabled and unchecked        
+        # Button starts disabled and unchecked
         self.action.setEnabled(False) 
         self.action.setCheckable(True) 
         self.action.setChecked(False) 
@@ -95,14 +97,15 @@ class AdaplinControl:
         
         # Connect the change of the Raster Layer in the ComboBox to function trata_combo
         self.dlg.comboBox.currentIndexChanged.connect(self.trata_combo)
-        
-
-
 
     def toggle(self):
         # Get current layer
         mc = self.canvas
         layer = mc.currentLayer()
+
+        if self.disconnection:
+            self.disconnection()
+            self.disconnection = None
         #print "Adaplin layer = ", layer.name()
         
         # In case the current layer is None we do nothing
@@ -132,15 +135,19 @@ class AdaplinControl:
                 # If current layer is editable, the button is enabled
                 if layer.isEditable():
                     self.action.setEnabled(True)
+                    self.action.setChecked(False)
                     
                     # If we stop editing, we run toggle function to disable the button
                     layer.editingStopped.connect(self.toggle)
+                    
                 # Layer is not editable
                 else:
                     self.action.setEnabled(False)
+                    self.canvas.unsetCursor()
                     
                     # In case we start editing, we run toggle function to enable the button
                     layer.editingStarted.connect(self.toggle)
+                    
             else:
                 self.action.setEnabled(False)
         else:
@@ -174,78 +181,59 @@ class AdaplinControl:
         self.dlg.comboBox_3.addItems(lista_bandas)
         self.dlg.comboBox_4.addItems(lista_bandas)
 
-
+    
     def run(self):
-        # Unpress the button if it is pressed  
-        if not self.action.isChecked(): 
-            print self.action.isChecked()
-            self.action.setChecked(False)
+        # Unpress the button if it is pressed
+        #Changed here so the tool can't be disabled from the button
+        if not self.action.isChecked():
+            msg = QMessageBox()
+            msg.setIcon(4);
+            msg.setText("Adaplin is already running.")
+            msg.setWindowTitle("Adaplin")
+            msg.setStandardButtons(QMessageBox.Ok)
+            msg.exec_()
+            
+            self.action.setEnabled(True) 
+            self.action.setChecked(True)
             return
-        
-        # On-the-fly SRS must be Projected     
-        mapCanvasSrs = self.iface.mapCanvas().mapRenderer().destinationCrs()
-        if mapCanvasSrs.geographicFlag():
-            QMessageBox.information(self.iface.mainWindow(), 'Error', '<h2> Please choose an On-the-Fly Projected Coordinate System</h2>')
-            return
-        
-        
+
         # Clear ComboBox of Raster Selection. 
-        # This command generate a bug sometimes (for example, when using the plugin with a raster, removing this raster and adding it again) 
+        # Disconnect and connect the signal is possible and not elegant
+        # But can resolve the problem of this command generate a bug sometimes (for example, when using the plugin with a raster, removing this raster and adding it again) 
         # when trying to clear the comboBox when it is triggered with trata_combo
-        # Disconnect and connect the signal is possible but not elegant
+        self.dlg.comboBox.currentIndexChanged.disconnect(self.trata_combo)
         self.dlg.comboBox.clear()
-        
-        
+        self.dlg.comboBox.currentIndexChanged.connect(self.trata_combo)
         
         # List rasters of Legend Interface
         self.camadas_raster = []
+        rasterLayerExists = False #Added this variable to correctly trigger the Legend Interface exception 
         camadas = self.iface.legendInterface().layers()
         
         for camada in camadas:
             if camada.type() == QgsMapLayer.RasterLayer:
+                rasterLayerExists = True
                 self.camadas_raster.append(camada)
                 self.dlg.comboBox.addItem(camada.name())
                 
         # Error in case there are no raster layers in the Legend Interface
-        if not self.camadas_raster:
-            QMessageBox.information(self.iface.mainWindow(), 'Error', '<h2>There are no raster layers in the Legend Interace</h2>')
+        if not rasterLayerExists:
+            QMessageBox.information(self.iface.mainWindow(), 'Error', '<h2>There are no raster layers in the Legend Interface</h2>')
+            self.deactivate()
             return
-        
+
+        # On-the-fly SRS must be Projected 
+        mapCanvasSrs = self.iface.mapCanvas().mapSettings().destinationCrs()
+        if mapCanvasSrs.geographicFlag():
+            QMessageBox.information(self.iface.mainWindow(), 'Error', '<h2> Please choose an On-the-Fly Projected Coordinate System</h2>')
         
         # Finish the dialog box and run the dialog event loop
         self.dlg.show()
         result = self.dlg.exec_()
                 
         # See if OK was pressed
-        if result:
-            # Get Raster Selected from ComboBox
-            indiceCamada = self.dlg.comboBox.currentIndex()
-            camadaSelecionada = self.camadas_raster[indiceCamada]
-                    
+        self.OkPressEvent(result)
 
-            
-            # Get Bands selected for this Raster
-            numBandas = camadaSelecionada.bandCount()
-            lista_bandas = [str(b) for b in range(1, numBandas+1)]
-            
-            indiceCombo2 = self.dlg.comboBox_2.currentIndex()
-            indiceCombo3 = self.dlg.comboBox_3.currentIndex()
-            indiceCombo4 = self.dlg.comboBox_4.currentIndex()
-            
-            bandas_selecao = (lista_bandas[indiceCombo2], lista_bandas[indiceCombo3], lista_bandas[indiceCombo4])
-                        
-            # Activate our tool if OK is pressed
-            self.adaplin = Adaplin(self.iface, camadaSelecionada, bandas_selecao)
-
-            mc = self.canvas
-            layer = mc.currentLayer()
-      
-            mc.setMapTool(self.adaplin)
-            self.action.setChecked(True)
-        
-        else:
-            self.action.setChecked(False)
-     
     def openSettings(self):
         # Default settings to reload
         def valoresPadrao():
@@ -265,4 +253,34 @@ class AdaplinControl:
 
         # Disconnect signal connected previously 
         self.settingsDialog.pushButton.clicked.disconnect(valoresPadrao)
+
+    def OkPressEvent(self, result):
+        if result:
+            # Get Raster Selected from ComboBox
+            indiceCamada = self.dlg.comboBox.currentIndex()
+            camadaSelecionada = self.camadas_raster[indiceCamada]
+
+                    
+            # Get Bands selected for this Raster
+            numBandas = camadaSelecionada.bandCount()
+            lista_bandas = [str(b) for b in range(1, numBandas+1)]
             
+            indiceCombo2 = self.dlg.comboBox_2.currentIndex()
+            indiceCombo3 = self.dlg.comboBox_3.currentIndex()
+            indiceCombo4 = self.dlg.comboBox_4.currentIndex()
+            
+            bandas_selecao = (lista_bandas[indiceCombo2], lista_bandas[indiceCombo3], lista_bandas[indiceCombo4])
+
+                        
+            # Activate our tool if OK is pressed
+            self.adaplin = Adaplin(self.iface, camadaSelecionada, bandas_selecao, self.action)
+
+            mc = self.canvas
+            layer = mc.currentLayer()
+
+            mc.setMapTool(self.adaplin)
+            self.action.setChecked(True)    
+        
+        else:
+            self.deactivate()
+            return
