@@ -53,7 +53,8 @@ from utils import *
 
 
 class AdaplinControl():
-    
+    ""  Class that iinterconects QGISApplication to AdplinTool
+    ""
     def __init__(self, iface):
         # Save reference to the QGIS interface
         self.iface = iface
