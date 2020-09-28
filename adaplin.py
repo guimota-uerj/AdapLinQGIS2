@@ -1,286 +1,302 @@
 # -*- coding: utf-8 -*-
 
-#---------------------------------------------------------------------
-# 
-# Adaplin - a QGIS Plugin
-#
-# Copyright (C) 2016 Marcel Rotunno with stuff from Peter Wells for Lutra Consulting (AutoTrace), 
-#                    Cédric Möri (traceDigitize) and Radim Blazek (Spline)
-#
-# EMAIL: marcelgaucho@yahoo.com.br
-#
-#---------------------------------------------------------------------
-# 
-# Licensed under the terms of GNU GPL 2
-# 
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation; either version 2 of the License, or
-# (at your option) any later version.
-# 
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-# 
-# You should have received a copy of the GNU General Public License along
-# with this program; if not, write to the Free Software Foundation, Inc.,
-# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-# 
-#---------------------------------------------------------------------
-import sys
-
-# Import the PyQt and the QGIS libraries
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 from qgis.core import *
 from qgis.gui import *
-import qgis.utils
-from qgis.core.contextmanagers import qgisapp
+import numpy as np
+from math import sqrt
+import collections
 
-# Initialize Qt resources from file resources.py
-import resources
-
-# Import the code for the dialog
-from adaplin_dialog import AdaplinDialog
-
-# Import own classes and tools
-from adaplin_tool import Adaplin
-
-# Import code for settings
-from settings_dialog import SettingsDialog
 from utils import *
+from pathCalculator import *
 
 
-class AdaplinControl():
-    
-    def __init__(self, iface):
-        # Save reference to the QGIS interface
+class Adaplin(QgsMapTool):
+
+    """ 
+    Adaplin Plugin Class
+
+        Implements the optimal path based on properties 1, 2 and 3.
+        Prop1: Models the road considering that its spectral answer is superior to that of the surroundings;
+        Prop2: Reflects the homogeneity of the spectral answer of the road;
+        Prop3: Regularization term of the shape of the road, aiming a smoother curvature.
+
+        Each time the user moves the mouse, a preview of the road is rendered. When the user clicks, the preview
+        is inserted in the polyline.
+
+        More information: http://www.seer.ufu.br/index.php/revistabrasileiracartografia/article/view/45398
+    """
+
+    def __init__(self, iface, camada_raster, bandas, action):
+        self.camada_raster = camada_raster
         self.iface = iface
+        self.action = action
         self.canvas = self.iface.mapCanvas()
+        self.bandas = bandas
         
-        # Create dialog form
-        self.dlg = AdaplinDialog()
+        QgsMapTool.__init__(self, self.canvas)
+        self.rb = QgsRubberBand(self.canvas,  QGis.Polygon)
+        self.type = QGis.Polygon 
         
-        # Create settings dialog
-        self.settingsDialog = SettingsDialog()
+        # List of points (points) marked by the user, of all the points that will form the line (pontos_interpolados) 
+        # and variable to set the manual mode ON or OFF (at start is OFF)
+        self.points = []
+        self.pontos_interpolados = []
+        self.mCtrl = False
 
-        self.disconnection = None
+        self.cursor = QCursor(QPixmap(["16 16 3 1",
+                                      "      c None",
+                                      ".     c #FF0000",
+                                    
+                                    
+                                      "+     c #FFFFFF",
+                                      "                ",
+                                      "       +.+      ",
+                                      "      ++.++     ",
+                                      "     +.....+    ",
+                                      "    +.     .+   ",
+                                      "   +.   .   .+  ",
+                                      "  +.    .    .+ ",
+                                      " ++.    .    .++",
+                                      " ... ...+... ...",
+                                      " ++.    .    .++",
+                                      "  +.    .    .+ ",
+                                      "   +.   .   .+  ",
+                                      "   ++.     .+   ",
+                                      "    ++.....+    ",
+                                      "      ++.++     ",
+                                      "       +.+      "]))       
+                                      
+    def canvasPressEvent(self, event):
 
-    def initGui(self):
-        mc = self.canvas
-        layer = mc.currentLayer()
+        """ If the selected layer is editable and adaplin is selected, it interpolates the path between the last point
+        present in the polyline and the coordinate of the mouse click. All new points are added to the polyline. """
 
-        # Create action for the plugin icon and the plugin menu
-        self.action = QAction( QIcon(":/plugins/AdaplinTool/AdaplinIcon.png"), "Adaplin", self.iface.mainWindow() )
-        
-        # Button starts disabled and unchecked
-        self.action.setEnabled(False) 
-        self.action.setCheckable(True) 
-        self.action.setChecked(False) 
+        layer = self.canvas.currentLayer()
 
-        # Add Settings to the [Vector] Menu 
-        self.settingsAction = QAction( "Settings", self.iface.mainWindow() )
-        #self.iface.addPluginToVectorMenu("&Adaplin Settings", self.settingsAction)
-        self.iface.addPluginToMenu("&Adaplin", self.settingsAction)
-        self.settingsAction.triggered.connect(self.openSettings) 
-
-        # Add the plugin to Plugin Menu and the Plugin Icon to the Toolbar
-        self.iface.addPluginToMenu("&Adaplin", self.action)
-        self.iface.addToolBarIcon(self.action)
-
-      
-        # Connect signals for button behaviour (map layer change, run the tool and change of QGIS map tool set)
-        self.iface.currentLayerChanged['QgsMapLayer*'].connect(self.toggle)
-        self.action.triggered.connect(self.run)
-        QObject.connect(mc, SIGNAL("mapToolSet(QgsMapTool*)"), self.deactivate)
-        
-        # Connect the change of the Raster Layer in the ComboBox to function trata_combo
-        self.dlg.comboBox.currentIndexChanged.connect(self.trata_combo)
-
-    def toggle(self):
-        # Get current layer
-        mc = self.canvas
-        layer = mc.currentLayer()
-
-        if self.disconnection:
-            self.disconnection()
-            self.disconnection = None
-        #print "Adaplin layer = ", layer.name()
-        
-        # In case the current layer is None we do nothing
-        if layer is None:
-            return
-        
-        #print 'raster type = ', layer.type()
-        #print 'e vector = ', layer.type() == layer.VectorLayer
-        
-        # This is to decide when the plugin button is enabled or disabled
-        # The layer must be a Vector Layer
-        if layer.type() == layer.VectorLayer:
-            # We only care about the Line and Polygon layers
-            if layer.geometryType() == QGis.Line or layer.geometryType() == QGis.Polygon:
-                # First we disconnect all possible previous signals associated with this layer 
-                # If layer is editable, SIGNAL "editingStopped()" is connected to toggle
-                # If it is not editable, SIGNAL "editingStarted()" is connected to toggle
-                try:
-                    layer.editingStarted.disconnect(self.toggle)
-                except:
-                    pass
-                try:
-                    layer.editingStopped.disconnect(self.toggle)
-                except:
-                    pass                
-
-                # If current layer is editable, the button is enabled
-                if layer.isEditable():
-                    self.action.setEnabled(True)
-                    self.action.setChecked(False)
-                    
-                    # If we stop editing, we run toggle function to disable the button
-                    layer.editingStopped.connect(self.toggle)
-                    
-                # Layer is not editable
+        if layer.isEditable() and self.action.isChecked():
+            # Device coordinates of mouse
+            x = event.pos().x()
+            y = event.pos().y()
+            
+            # Add the marked point on left click
+            if event.button() == Qt.LeftButton:
+                startingPoint = QPoint(x,y) 
+                
+                # Try to snap to current Layer if it is specified in QGIS digitizing options
+                snapper = QgsMapCanvasSnapper(self.canvas)
+                (retval,result) = snapper.snapToCurrentLayer (startingPoint, QgsSnapper.SnapToVertex)
+                     
+                if result != []:
+                    point = QgsPoint( result[0].snappedVertex )
                 else:
-                    self.action.setEnabled(False)
-                    self.canvas.unsetCursor()
-                    
-                    # In case we start editing, we run toggle function to enable the button
-                    layer.editingStarted.connect(self.toggle)
-                    
+                    (retval,result) = snapper.snapToBackgroundLayers(startingPoint)
+                    if result != []:
+                        point = QgsPoint( result[0].snappedVertex )
+                    else:
+                        point = self.canvas.getCoordinateTransform().toMapCoordinates( event.pos().x(), event.pos().y() )
+                
+                # Append point to list of points marked by the user
+                self.points.append(point)
+                
+                # If tool is in Manual Mode, we just append the point to pontos_interpolados            
+                if self.mCtrl:
+                    self.pontos_interpolados.append(point)
+                # If the tool is in Default Mode, we append the new points to pontos_interpolados
+                else:
+                    pontos_recentes = self.interpolation ( self.points[-2::] )
+                    self.pontos_interpolados = self.pontos_interpolados + pontos_recentes[1:] 
+            
+            # On the right click, we create the feature with pontos_interpolados and clear the things for the next feature  
             else:
-                self.action.setEnabled(False)
-        else:
-            self.action.setEnabled(False)
+                if len( self.points ) >= 2:
+                    self.createFeature(self.pontos_interpolados) 
 
-    def deactivate(self):
-        self.action.setChecked(False)
-        
-    def unload(self):
-        # Removes item from Plugin Menu, Vector Menu and removes the toolbar icon
-        self.iface.removePluginMenu("&Adaplin", self.action)
-        self.iface.removePluginMenu("&Adaplin", self.settingsAction)
-        self.iface.removeToolBarIcon(self.action)
+                self.resetPoints()
+                self.resetRubberBand()
+                self.canvas.refresh()
 
-    def trata_combo(self):
-        # ComboBox Selected Raster Layer
-        indiceCamada = self.dlg.comboBox.currentIndex()
-        camadaSelecionada = self.camadas_raster[indiceCamada]
-        
-        # Clear ComboBoxs of Bands
-        self.dlg.comboBox_2.clear()
-        self.dlg.comboBox_3.clear()
-        self.dlg.comboBox_4.clear()
+    def resetPoints(self):
 
-        # Get number of raster bands
-        numBandas = camadaSelecionada.bandCount()
+        """ Reset the list points e pontos_interpolados. """
 
-        # List image bands by numbers and add them to Bands ComboBoxs
-        lista_bandas = [str(b) for b in range(1, numBandas+1)]
-        self.dlg.comboBox_2.addItems(lista_bandas)
-        self.dlg.comboBox_3.addItems(lista_bandas)
-        self.dlg.comboBox_4.addItems(lista_bandas)
-
+        self.points = []
+        self.pontos_interpolados = []
     
-    def run(self):
-        # Unpress the button if it is pressed
-        #Changed here so the tool can't be disabled from the button
-        if not self.action.isChecked():
-            msg = QMessageBox()
-            msg.setIcon(4);
-            msg.setText("Adaplin is already running.")
-            msg.setWindowTitle("Adaplin")
-            msg.setStandardButtons(QMessageBox.Ok)
-            msg.exec_()
+    def createFeature(self, pontos_interpolados):
+
+        """ Insert a poliline into current layer shapefile. """
+
+        layer = self.canvas.currentLayer() 
+        provider = layer.dataProvider()
+        fields = layer.pendingFields()
+        f = QgsFeature(fields)
             
-            self.action.setEnabled(True) 
-            self.action.setChecked(True)
-            return
-
-        # Clear ComboBox of Raster Selection. 
-        # Disconnect and connect the signal is possible and not elegant
-        # But can resolve the problem of this command generate a bug sometimes (for example, when using the plugin with a raster, removing this raster and adding it again) 
-        # when trying to clear the comboBox when it is triggered with trata_combo
-        self.dlg.comboBox.currentIndexChanged.disconnect(self.trata_combo)
-        self.dlg.comboBox.clear()
-        self.dlg.comboBox.currentIndexChanged.connect(self.trata_combo)
+        coords = pontos_interpolados
         
-        # List rasters of Legend Interface
-        self.camadas_raster = []
-        rasterLayerExists = False #Added this variable to correctly trigger the Legend Interface exception 
-        camadas = self.iface.legendInterface().layers()
-        
-        for camada in camadas:
-            if camada.type() == QgsMapLayer.RasterLayer:
-                rasterLayerExists = True
-                self.camadas_raster.append(camada)
-                self.dlg.comboBox.addItem(camada.name())
-                
-        # Error in case there are no raster layers in the Legend Interface
-        if not rasterLayerExists:
-            QMessageBox.information(self.iface.mainWindow(), 'Error', '<h2>There are no raster layers in the Legend Interface</h2>')
-            self.deactivate()
-            return
-
-        # On-the-fly SRS must be Projected 
-        mapCanvasSrs = self.iface.mapCanvas().mapSettings().destinationCrs()
-        if mapCanvasSrs.geographicFlag():
-            QMessageBox.information(self.iface.mainWindow(), 'Error', '<h2> Please choose an On-the-Fly Projected Coordinate System</h2>')
-        
-        # Finish the dialog box and run the dialog event loop
-        self.dlg.show()
-        result = self.dlg.exec_()
-                
-        # See if OK was pressed
-        self.OkPressEvent(result)
-
-    def openSettings(self):
-        # Default settings to reload
-        def valoresPadrao():
-            self.settingsDialog.doubleSpinBox.setValue(DEFAULT_ESPACAMENTO)
-            self.settingsDialog.spinBox.setValue(DEFAULT_QPONTOS)
-            
-        
-        # Connect button to function that reload default values
-        self.settingsDialog.pushButton.clicked.connect(valoresPadrao)
-        self.settingsDialog.show()
-        result = self.settingsDialog.exec_()
-        
-        # If OK is pressed we update the settings
-        if result:
-            QSettings().setValue(SETTINGS_NAME + "/qpontos", self.settingsDialog.spinBox.value())
-            QSettings().setValue(SETTINGS_NAME + "/espacamento", self.settingsDialog.doubleSpinBox.value())
-
-        # Disconnect signal connected previously 
-        self.settingsDialog.pushButton.clicked.disconnect(valoresPadrao)
-
-    def OkPressEvent(self, result):
-        if result:
-            # Get Raster Selected from ComboBox
-            indiceCamada = self.dlg.comboBox.currentIndex()
-            camadaSelecionada = self.camadas_raster[indiceCamada]
-
-                    
-            # Get Bands selected for this Raster
-            numBandas = camadaSelecionada.bandCount()
-            lista_bandas = [str(b) for b in range(1, numBandas+1)]
-            
-            indiceCombo2 = self.dlg.comboBox_2.currentIndex()
-            indiceCombo3 = self.dlg.comboBox_3.currentIndex()
-            indiceCombo4 = self.dlg.comboBox_4.currentIndex()
-            
-            bandas_selecao = (lista_bandas[indiceCombo2], lista_bandas[indiceCombo3], lista_bandas[indiceCombo4])
-
-                        
-            # Activate our tool if OK is pressed
-            self.adaplin = Adaplin(self.iface, camadaSelecionada, bandas_selecao, self.action)
-
-            mc = self.canvas
-            layer = mc.currentLayer()
-
-            mc.setMapTool(self.adaplin)
-            self.action.setChecked(True)    
-        
+        if self.canvas.mapSettings().hasCrsTransformEnabled() and layer.crs() != self.canvas.mapSettings().destinationCrs():
+            coords_tmp = coords[:]
+            coords = []
+            for point in coords_tmp:
+                transformedPoint = self.canvas.mapSettings().mapToLayerCoordinates( layer, point )
+                coords.append(transformedPoint)
+              
+        if self.isPolygon == True:
+            g = QgsGeometry().fromPolygon([coords])
         else:
-            self.deactivate()
+            g = QgsGeometry().fromPolyline(coords)
+        f.setGeometry(g)
+            
+        for field in fields.toList():
+            ix = fields.indexFromName(field.name())
+            f[field.name()] = provider.defaultValue(ix)
+
+        layer.beginEditCommand("Feature added")
+        
+        settings = QSettings()
+        
+        if len(self.points) != 0:
+            disable_attributes = settings.value( "/qgis/digitizing/disable_enter_attribute_values_dialog", False, type=bool)
+
+            if disable_attributes:
+                layer.addFeature(f)
+                layer.endEditCommand()
+            else:
+                dlg = self.iface.getFeatureForm(layer, f)
+                if QGis.QGIS_VERSION_INT >= 20400: 
+                    dlg.setMode( True ) 
+                if dlg.exec_():
+                    if QGis.QGIS_VERSION_INT < 20400: 
+                        layer.addFeature(f)
+                    layer.endEditCommand()
+                else:
+                    layer.destroyEditCommand()
+
+        else:
+            QMessageBox.information(self.iface.mainWindow(), 'Aviso', 'Nenhum ponto marcado ainda')
             return
+    
+    def canvasMoveEvent(self,event):
+
+        """ Trigged whenever the user moves the mouse, redrawing the preview of the road. """
+
+        color = QColor(255,0,0,100)
+        self.rb.setColor(color)
+        self.rb.setWidth(3)
+
+        x = event.pos().x()
+        y = event.pos().y()
+        
+        startingPoint = QPoint(x,y)
+        snapper = QgsMapCanvasSnapper(self.canvas)
+            
+        (retval,result) = snapper.snapToCurrentLayer (startingPoint, QgsSnapper.SnapToVertex)   
+        if result != []:
+            point = QgsPoint(result[0].snappedVertex)
+        else:
+            (retval,result) = snapper.snapToBackgroundLayers(startingPoint)
+            if result != []:
+                point = QgsPoint(result[0].snappedVertex)
+            else:
+                point = self.canvas.getCoordinateTransform().toMapCoordinates(event.pos().x(), event.pos().y());
+        
+        pontos_marcados = list(self.points)
+        pontos_interpolados = list(self.pontos_interpolados)
+        pontos_marcados.append(point)
+        
+        if self.mCtrl:
+            pontos_interpolados.append(point)
+        else:
+            #pontos_recentes, grafo, pontos_perpendiculares, result = self.interpolation ( pontos_marcados[-2::] )
+            pontos_recentes = self.interpolation (pontos_marcados[-2::])
+            pontos_interpolados = pontos_interpolados + pontos_recentes[1:]
+       
+        self.setRubberBandPoints(pontos_interpolados)
+
+    def activate(self):
+
+        """ Verify if the selected layer is QGis.Polygon type. If true, self.isPolygon = True. """
+
+        self.canvas.setCursor(self.cursor)
+        
+        layer = self.canvas.currentLayer()
+        self.type = layer.geometryType()
+        self.isPolygon = False
+        if self.type == QGis.Polygon:
+            self.isPolygon = True
+            
+    def resetRubberBand(self):
+
+        """ Reset rubber bands list. """
+
+        self.rb.reset(self.type)
+
+    def setRubberBandPoints(self,points):
+
+        self.resetRubberBand()
+        for point in points:
+            update = point is points[-1]
+            self.rb.addPoint(point, update)
+
+    # 
+    def interpolation(self, points):
+
+        """ Calculate the optimal path based at the obtained points in canvasPressEvent(). 
+            Interpolate 2 points between the segment traced by the user. """
+        
+        grafo = pathCalculator(self.iface, points, self.camada_raster, self.bandas)
+        
+        # Do the interpolation
+        pontos_recentes = grafo.interpolation(points)
+
+        return pontos_recentes
+
+    def keyPressEvent(self,  event):
+
+        """ 
+        Switch the tool state:
+        Ctrl: Enable or Disable the optimal path;
+        Esc: Ends the feature;
+        Shift: Center the mapcanvas in the last clicked point.
+
+        """
+
+        if event.key() == Qt.Key_Control:
+            if self.mCtrl is True:
+                self.mCtrl = False
+            else:
+                self.mCtrl = True
+        if event.key() == Qt.Key_Escape:
+            self.createFeature(self.pontos_interpolados)
+            self.resetPoints()
+            self.resetRubberBand()
+            self.canvas.refresh()
+        if event.key() == Qt.Key_Shift:
+            try:
+                ultimo_ponto = self.pontos_interpolados[-1]
+                self.canvas.setExtent(QgsRectangle(ultimo_ponto, ultimo_ponto))
+                self.canvas.refresh()
+            except:
+                pass
+
+    def keyReleaseEvent(self,  event):
+
+        """ Enabled when user presses BackSpace. Delete the last point added. """
+
+        if event.key() == Qt.Key_Backspace:
+            self.removeLastPoint()
+
+    def removeLastPoint(self):
+
+        """ Removes the last point from the list points and pontos_interpolados. """
+
+        if len(self.points) == 0:
+            QMessageBox.information(self.iface.mainWindow(), 'Aviso', 'Nenhum ponto marcado ainda')
+        elif len(self.points) == 1:
+            self.points.pop()
+            self.pontos_interpolados.pop()
+        else:
+            penultimo_elemento_marcado = self.points[-2]
+            self.pontos_interpolados = self.pontos_interpolados[0:self.pontos_interpolados.index(penultimo_elemento_marcado)+1]
+            self.points.pop()

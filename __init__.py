@@ -30,5 +30,5 @@
 #---------------------------------------------------------------------
 
 def classFactory(iface):  
-    from .adaplin import AdaplinControl
+    from .adaplincontrol import AdaplinControl
     return AdaplinControl(iface)
